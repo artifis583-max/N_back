@@ -165,7 +165,7 @@ Your job: read the problem, solve it, and return ONLY the raw solution code.
 
 Rules:
 - Output ONLY the complete, compilable code. No explanation, no markdown, no code fences.
-- Default language: C++ (use #include<bits/stdc++.h> and int main()).
+- detect language and if header and footer present in Question then provide only required part of code otherwise full code:
 - Do NOT indent any line. No leading spaces or tabs. Write all code flush to the left margin.
 - If the problem specifies another language, use that language instead.
 - Every line of code must be on its own line — do NOT collapse to one line.
@@ -182,7 +182,7 @@ Your job: read the problem from the image, solve it, and return ONLY the raw sol
 
 Rules:
 - Output ONLY the complete, compilable code. No explanation, no markdown, no code fences.
-- Default language: C++ (use #include<bits/stdc++.h> and int main()).
+- detect language and if header and footer present in Question then provide only required part of code otherwise full code:
 - If the problem specifies another language, use that language instead.
 - Do NOT indent any line. No leading spaces or tabs. Write all code flush to the left margin.
 - Every line of code must be on its own line — do NOT collapse to one line.
