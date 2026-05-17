@@ -1,0 +1,62 @@
+# Python
+
+**pycache**/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables (your secrets live here, don’t leak them)
+
+.env
+.env.*
+*.env
+
+# Database files (SQLite)
+
+*.db
+*.sqlite3
+
+# Logs
+
+*.log
+
+# OS junk
+
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+
+.vscode/
+.idea/
+
+# Python packaging
+
+build/
+dist/
+*.egg-info/
+
+# Cache
+
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Uvicorn / FastAPI temp
+
+*.pid
+
+# Docker (optional, keep if you want tracked)
+
+# Uncomment if you DON'T want Docker files tracked
+
+# Dockerfile
+
+# docker-compose.yml
