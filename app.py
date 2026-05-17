@@ -1327,7 +1327,7 @@ def get_events(
 
 
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/neo", response_class=HTMLResponse)
 def admin_page():
     return """
   <!DOCTYPE html>
