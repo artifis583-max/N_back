@@ -4,7 +4,7 @@ python-jose[cryptography]
 # ollama
 psycopg[binary]
 python-multipart
-# jinja2
+jinja2
 # openai
 google-generativeai
 psycopg-pool

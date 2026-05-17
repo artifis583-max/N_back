@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse, PlainTextResponse
-from fastapi.templating import Jinja2Templates
+# from fastapi.templating import Jinja2Templates
 
 # templates = Jinja2Templates(directory="templates")
 
