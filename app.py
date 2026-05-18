@@ -153,7 +153,8 @@ class DevicePatch(BaseModel):
 
 class SolveRequest(BaseModel):
     text: str | None = Field(default=None, max_length=20000)
-    image: str | None = Field(default=None)  # base64 PNG/JPEG (raw or data URI)
+    image: str | None = Field(default=None)          # single image (legacy)
+    images: list[str] | None = Field(default=None)   # multi-capture array (ALT+S)
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -999,28 +1000,29 @@ async def solve(payload: SolveRequest, request: Request):
     device_id = _decode_bearer_token(request)
     _check_rate_limit(_rate_limit_key(request, device_id))
 
-    has_text = bool(payload.text and payload.text.strip())
+    has_text  = bool(payload.text and payload.text.strip())
     has_image = bool(payload.image and payload.image.strip())
+    has_images = bool(payload.images and len(payload.images) > 0)
 
-    if not has_text and not has_image:
+    if not has_text and not has_image and not has_images:
         raise HTTPException(
-            status_code=400, detail="Provide at least one of: text, image"
+            status_code=400, detail="Provide at least one of: text, image, images"
         )
 
-    input_mode = "image" if has_image else "text"
+    input_mode = "text" if has_text and not has_image and not has_images else "image"
 
-    # Strip data URI prefix — accept raw base64 or data:image/png;base64,... / jpeg
-    image_b64: str | None = None
-    if has_image:
-        raw_image = payload.image.strip()
-        if raw_image.startswith("data:"):
-            comma_idx = raw_image.find(",")
+    # ── Normalise all image inputs into a list of raw base64 strings ──────────
+    def _strip_data_uri(raw: str) -> str:
+        """Strip data URI prefix, validate mime type, return raw base64."""
+        raw = raw.strip()
+        if raw.startswith("data:"):
+            comma_idx = raw.find(",")
             if comma_idx == -1:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid image data URI: missing comma separator",
                 )
-            header = raw_image[:comma_idx].lower()
+            header = raw[:comma_idx].lower()
             if (
                 "image/png" not in header
                 and "image/jpeg" not in header
@@ -1030,13 +1032,17 @@ async def solve(payload: SolveRequest, request: Request):
                     status_code=400,
                     detail="Unsupported image type. Only PNG and JPEG accepted.",
                 )
-            image_b64 = raw_image[comma_idx + 1 :]
-        else:
-            image_b64 = raw_image
-        if not image_b64:
-            raise HTTPException(
-                status_code=400, detail="Image data is empty after stripping header."
-            )
+            return raw[comma_idx + 1:]
+        return raw
+
+    image_b64_list: list[str] = []
+    if has_image:
+        image_b64_list = [_strip_data_uri(payload.image)]
+    elif has_images:
+        image_b64_list = [_strip_data_uri(img) for img in payload.images if img and img.strip()]
+        if not image_b64_list:
+            raise HTTPException(status_code=400, detail="images array is empty after stripping.")
+
 
     # Acquire a concurrency slot — runs in thread so event loop stays free during wait
     acquired = await asyncio.to_thread(
@@ -1061,13 +1067,24 @@ async def solve(payload: SolveRequest, request: Request):
         if input_mode == "image":
             import base64
 
-            image_bytes = base64.b64decode(image_b64)
-            gemini_contents = [
-                {"mime_type": "image/jpeg", "data": image_bytes},
-                "Solve the MCQ visible in this screenshot.",
-            ]
+            # Build content list: all images first, then the instruction prompt.
+            # Gemini 1.5 Pro supports up to 16 images in a single request.
+            gemini_contents = []
+            for b64 in image_b64_list:
+                gemini_contents.append(
+                    {"mime_type": "image/jpeg", "data": base64.b64decode(b64)}
+                )
+            count = len(image_b64_list)
+            if count == 1:
+                gemini_contents.append("Solve the MCQ visible in this screenshot.")
+            else:
+                gemini_contents.append(
+                    f"These are {count} screenshots of the same problem taken from different "
+                    f"parts of the screen. Together they show the full question. "
+                    f"Solve the MCQ visible across all screenshots."
+                )
             system_prompt = PROMPT_IMAGE
-            log_question = "[image-mode]"
+            log_question = f"[image-mode x{count}]"
         else:
             extracted_text = payload.text.strip()
             gemini_contents = [
@@ -1340,7 +1357,7 @@ def admin_page():
         <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
         <style>
             :root {
-                --bg: #080c14;
+                --bg: #0a0f1a;
                 --bg-card: #0e1520;
                 --bg-input: #060a10;
                 --accent: #4f8ef7;
@@ -1351,7 +1368,7 @@ def admin_page():
                 --success: #22c55e;
                 --danger: #f43f5e;
                 --warning: #f59e0b;
-                --sidebar-w: 240px;
+                --sidebar-w: 220px;
                 --mobile-header-h: 60px;
             }
 
@@ -1603,7 +1620,7 @@ def admin_page():
             }
 
             .page-title {
-                font-size: 1.6rem;
+                font-size: 1.4rem;
                 font-weight: 700;
                 letter-spacing: -0.03em;
             }
@@ -1651,7 +1668,7 @@ def admin_page():
             .card {
                 background: var(--bg-card);
                 border: 1px solid var(--border);
-                border-radius: 16px;
+                border-radius: 12px;
                 margin-bottom: 1.75rem;
                 overflow: hidden;
                 width: 100%;
@@ -1807,7 +1824,7 @@ def admin_page():
             }
 
             tr:last-child td { border-bottom: none; }
-            tr:hover td { background: rgba(255, 255, 255, 0.02); }
+            tr:hover td { background: rgba(79, 142, 247, 0.06); }
 
             .mono {
                 font-family: 'JetBrains Mono', monospace;
@@ -1835,6 +1852,47 @@ def admin_page():
             .badge-ban { background: rgba(244, 63, 94, 0.15); color: var(--danger); }
             .badge-ans { background: rgba(79, 142, 247, 0.15); color: var(--accent); }
 
+            /* ── USAGE BAR ──────────────────────────────────── */
+            .usage-bar-wrap {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 120px;
+            }
+            .usage-bar-track {
+                flex: 1;
+                height: 6px;
+                background: var(--border);
+                border-radius: 3px;
+                overflow: hidden;
+            }
+            .usage-bar-fill {
+                height: 100%;
+                border-radius: 3px;
+                background: linear-gradient(90deg, var(--accent), var(--accent2));
+                transition: width 0.4s ease;
+            }
+            .usage-bar-fill.low  { background: var(--danger); }
+            .usage-bar-fill.mid  { background: var(--warning); }
+            .usage-bar-label {
+                font-size: 0.8rem;
+                color: var(--muted);
+                white-space: nowrap;
+            }
+
+            /* ── NAV BADGE (solve count) ────────────────────── */
+            .nav-badge {
+                margin-left: auto;
+                background: rgba(79, 142, 247, 0.18);
+                color: var(--accent);
+                font-size: 0.7rem;
+                font-weight: 700;
+                padding: 2px 7px;
+                border-radius: 10px;
+                min-width: 22px;
+                text-align: center;
+            }
+
             /* ── ACTION BTNS ────────────────────────────────── */
             .btn-sm {
                 padding: 6px 14px;
@@ -1856,7 +1914,7 @@ def admin_page():
             .btn-refresh {
                 padding: 0.6rem 1.25rem;
                 border-radius: 10px;
-                background: transparent;
+                background: rgba(255,255,255,0.03);
                 border: 1px solid var(--border);
                 color: var(--text);
                 font-size: 0.9rem;
@@ -2041,7 +2099,7 @@ def admin_page():
                             <span class="icon">🖥</span> Devices
                         </div>
                         <div class="nav-item" data-page="qa" onclick="switchPage('qa')">
-                            <span class="icon">📋</span> Q&amp;A Logs
+                            <span class="icon">📋</span> Q&amp;A Logs <span class="nav-badge" id="nav-qa-count"></span>
                         </div>
                         <div class="nav-item" data-page="events" onclick="switchPage('events')">
                             <span class="icon">📡</span> Auth Events
@@ -2085,6 +2143,14 @@ def admin_page():
                             <div class="stat">
                                 <div class="stat-label">Q&amp;A Logged</div>
                                 <div class="stat-value blue" id="st-qa">—</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Solves Today</div>
+                                <div class="stat-value" style="color:var(--warning)" id="st-today">—</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-label">Image / Text Split</div>
+                                <div class="stat-value" style="font-size:1.3rem" id="st-split">—</div>
                             </div>
                         </div>
 
@@ -2538,25 +2604,57 @@ def admin_page():
             }
 
             /* ─── DASHBOARD ──────────────────────────────────────── */
+            let _dashInterval = null;
+
             async function loadDashboard() {
                 try {
                     const [dr, qr] = await Promise.all([
                         fetch('/admin/devices'),
-                        fetch('/admin/qa-logs?limit=1')
+                        fetch('/admin/qa-logs?limit=500')
                     ]);
                     if (!dr.ok) { if (dr.status === 401) showLogin(); return; }
                     const dd = await dr.json();
                     const devs = Object.values(dd.devices || {});
-                    document.getElementById('st-total').textContent = devs.length;
+                    document.getElementById('st-total').textContent  = devs.length;
                     document.getElementById('st-active').textContent = devs.filter(d => d.allowed).length;
                     document.getElementById('st-banned').textContent = devs.filter(d => !d.allowed).length;
+
                     if (qr.ok) {
                         const qd = await qr.json();
-                        document.getElementById('st-qa').textContent = qd.total ?? qd.count ?? '—';
+                        const total = qd.total ?? qd.count ?? 0;
+                        document.getElementById('st-qa').textContent = total;
+
+                        // Update nav badge
+                        const navBadge = document.getElementById('nav-qa-count');
+                        if (navBadge) navBadge.textContent = total > 0 ? total : '';
+
+                        // Solves Today — count logs from today (UTC)
+                        const logs = qd.logs || [];
+                        const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+                        const todayTs = todayStart.getTime() / 1000;
+                        const todayCount = logs.filter(l => l.ts >= todayTs).length;
+                        document.getElementById('st-today').textContent = todayCount;
+
+                        // Image vs Text split
+                        const imgCount  = logs.filter(l => l.input_mode === 'image').length;
+                        const textCount = logs.filter(l => l.input_mode !== 'image').length;
+                        document.getElementById('st-split').textContent =
+                            logs.length ? `🖼 ${imgCount} / 📝 ${textCount}` : '—';
                     }
+
                     log({ status: 'ok', devices: devs.length });
                 } catch (e) { log('Dashboard error: ' + e); }
             }
+
+            // Auto-refresh dashboard every 30s when on that page
+            function _startDashAutoRefresh() {
+                if (_dashInterval) return;
+                _dashInterval = setInterval(() => {
+                    const active = document.querySelector('.page.active');
+                    if (active && active.id === 'page-dashboard') loadDashboard();
+                }, 30000);
+            }
+            _startDashAutoRefresh();
 
             /* ─── DEVICES ─────────────────────────────────────────  */
             async function loadDevices() {
@@ -2620,8 +2718,23 @@ def admin_page():
                             td.appendChild(btn);
                             return td;
                         },
-                        // Remaining
-                        () => { const td = document.createElement('td'); td.textContent = '⚡ ' + d.remaining; return td; },
+                        // Remaining — usage bar
+                        () => {
+                            const td = document.createElement('td');
+                            const remaining = d.remaining ?? 0;
+                            // Try to infer limit from note or default 500
+                            const limit = d.usage_limit || 500;
+                            const pct = Math.min(100, Math.round((remaining / limit) * 100));
+                            const fillClass = pct <= 15 ? 'low' : pct <= 40 ? 'mid' : '';
+                            td.innerHTML = `
+                                <div class="usage-bar-wrap">
+                                    <div class="usage-bar-track">
+                                        <div class="usage-bar-fill ${fillClass}" style="width:${pct}%"></div>
+                                    </div>
+                                    <span class="usage-bar-label">${remaining}</span>
+                                </div>`;
+                            return td;
+                        },
                         // Note
                         () => { const td = document.createElement('td'); td.textContent = d.note || '—'; td.style.color = 'var(--muted)'; td.style.fontSize = '0.85rem'; return td; },
                         // Added
@@ -2759,7 +2872,11 @@ def admin_page():
                     const tdMode = document.createElement('td');
                     const modeBadge = document.createElement('span');
                     modeBadge.className = 'badge ' + (r.input_mode === 'image' ? 'badge-ans' : 'badge-ok');
-                    modeBadge.textContent = r.input_mode || 'text';
+                    // Show image count if multi-capture e.g. "[image-mode x3]"
+                    const imgMatch = (r.question || '').match(/x(\d+)/);
+                    modeBadge.textContent = r.input_mode === 'image'
+                        ? (imgMatch ? `🖼 x${imgMatch[1]}` : '🖼 IMG')
+                        : '📝 TEXT';
                     tdMode.appendChild(modeBadge);
 
                     const tdAns = document.createElement('td');
